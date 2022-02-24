@@ -30,6 +30,8 @@ contract CompatibilityFallbackHandler is DefaultCallbackHandler, ISignatureValid
         GnosisSafe safe = GnosisSafe(payable(msg.sender));
         bytes32 messageHash = getMessageHashForSafe(safe, _data);
         if (_signature.length == 0) {
+            // 若没有签名，就看看 signedMessages map 中是不是存在 approve
+            // signedMessages 是在 SignMessageLib 合约的 signMessage 方法中设置
             require(safe.signedMessages(messageHash) != 0, "Hash not approved");
         } else {
             safe.checkSignatures(messageHash, _data, _signature);

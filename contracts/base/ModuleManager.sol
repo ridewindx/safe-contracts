@@ -5,6 +5,7 @@ import "../common/SelfAuthorized.sol";
 import "./Executor.sol";
 
 /// @title Module Manager - A contract that manages modules that can execute transactions via this contract
+/// 使得 proxy 合约代理的 gnosis safe 合约能够使能一系列模块合约；使能的模块可以是 msg.sender 以执行交易而无需多签
 /// @author Stefan George - <stefan@gnosis.pm>
 /// @author Richard Meissner - <richard@gnosis.pm>
 contract ModuleManager is SelfAuthorized, Executor {
@@ -65,8 +66,10 @@ contract ModuleManager is SelfAuthorized, Executor {
         Enum.Operation operation
     ) public virtual returns (bool success) {
         // Only whitelisted modules are allowed.
+        // 交易发送者必须是使能的模块合约
         require(msg.sender != SENTINEL_MODULES && modules[msg.sender] != address(0), "GS104");
         // Execute transaction without further confirmations.
+        // 这里无需多签验证
         success = execute(to, value, data, operation, gasleft());
         if (success) emit ExecutionFromModuleSuccess(msg.sender);
         else emit ExecutionFromModuleFailure(msg.sender);

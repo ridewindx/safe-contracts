@@ -15,11 +15,13 @@ contract Executor {
         if (operation == Enum.Operation.DelegateCall) {
             // solhint-disable-next-line no-inline-assembly
             assembly {
+                // 执行环境是 proxy 合约的，msg.sender 是交易发送者
                 success := delegatecall(txGas, to, add(data, 0x20), mload(data), 0, 0)
             }
         } else {
             // solhint-disable-next-line no-inline-assembly
             assembly {
+                // 执行环境是 to 地址代表的合约的，msg.sender 是 proxy 合约
                 success := call(txGas, to, value, add(data, 0x20), mload(data), 0, 0)
             }
         }

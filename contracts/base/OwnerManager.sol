@@ -12,6 +12,7 @@ contract OwnerManager is SelfAuthorized {
 
     address internal constant SENTINEL_OWNERS = address(0x1);
 
+    // e.g., SENTINEL_OWNERS -> owner0; owner0 -> owner1; owner1 -> owner2; owner2 -> SENTINEL_OWNERS
     mapping(address => address) internal owners;
     uint256 internal ownerCount;
     uint256 internal threshold;
@@ -22,6 +23,7 @@ contract OwnerManager is SelfAuthorized {
     function setupOwners(address[] memory _owners, uint256 _threshold) internal {
         // Threshold can only be 0 at initialization.
         // Check ensures that setup function can only be called once.
+        // 限制 setupOwners 只能执行一次
         require(threshold == 0, "GS200");
         // Validate that threshold is smaller than number of added owners.
         require(_threshold <= _owners.length, "GS201");

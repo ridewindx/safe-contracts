@@ -14,7 +14,7 @@ contract GnosisSafeProxyFactory {
     /// @param data Payload for message call sent to new proxy contract.
     function createProxy(address singleton, bytes memory data) public returns (GnosisSafeProxy proxy) {
         proxy = new GnosisSafeProxy(singleton);
-        if (data.length > 0)
+        if (data.length > 0) // 若携带了 calldata，就调用 proxy 执行一下
             // solhint-disable-next-line no-inline-assembly
             assembly {
                 if eq(call(gas(), proxy, 0, add(data, 0x20), mload(data), 0, 0), 0) {
@@ -64,7 +64,7 @@ contract GnosisSafeProxyFactory {
         uint256 saltNonce
     ) public returns (GnosisSafeProxy proxy) {
         proxy = deployProxyWithNonce(_singleton, initializer, saltNonce);
-        if (initializer.length > 0)
+        if (initializer.length > 0) // 若携带了 calldata，就调用 proxy 执行一下
             // solhint-disable-next-line no-inline-assembly
             assembly {
                 if eq(call(gas(), proxy, 0, add(initializer, 0x20), mload(initializer), 0, 0), 0) {
@@ -102,6 +102,6 @@ contract GnosisSafeProxyFactory {
         uint256 saltNonce
     ) external returns (GnosisSafeProxy proxy) {
         proxy = deployProxyWithNonce(_singleton, initializer, saltNonce);
-        revert(string(abi.encodePacked(proxy)));
+        revert(string(abi.encodePacked(proxy))); // 通过 revert 返回的错误消息里包含计算得到的 proxy 地址
     }
 }

@@ -48,18 +48,23 @@ contract GnosisSafe is
     event ExecutionFailure(bytes32 txHash, uint256 payment);
     event ExecutionSuccess(bytes32 txHash, uint256 payment);
 
-    uint256 public nonce;
+    uint256 public nonce; // 每成功执行一次多签交易，此值增一
     bytes32 private _deprecatedDomainSeparator;
     // Mapping to keep track of all message hashes that have been approved by ALL REQUIRED owners
     mapping(bytes32 => uint256) public signedMessages;
     // Mapping to keep track of all hashes (message or transaction) that have been approved by ANY owners
+    // owner 地址 => 交易数据哈希 => 1
     mapping(address => mapping(bytes32 => uint256)) public approvedHashes;
 
     // This constructor ensures that this contract can only be used as a master copy for Proxy contracts
+    // 此合约一般是单例部署的，用作 proxy 合约创建时的 singleton，也就是 master copy
     constructor() {
         // By setting the threshold it is not possible to call setup anymore,
         // so we create a Safe with 0 owners and threshold 1.
         // This is an unusable Safe, perfect for the singleton
+        // 这里特意把 threshold 设为 1，导致不能直接调用 setup 方法
+        // 而使用方的 proxy 合约中是以 delegatecall 方式来调用此合约，所以使用的存储是 proxy 合约的存储
+        // 因此调用 setup 方法其实是在 proxy 合约的存储中设置
         threshold = 1;
     }
 
@@ -83,6 +88,7 @@ contract GnosisSafe is
         address payable paymentReceiver
     ) external {
         // setupOwners checks if the Threshold is already set, therefore preventing that this method is called twice
+        // 限制 setup 只能执行一次
         setupOwners(_owners, _threshold);
         if (fallbackHandler != address(0)) internalSetFallbackHandler(fallbackHandler);
         // As setupOwners can only be called if the contract has not been initialized we don't need a check for setupModules
@@ -103,10 +109,10 @@ contract GnosisSafe is
     /// @param data Data payload of Safe transaction.
     /// @param operation Operation type of Safe transaction.
     /// @param safeTxGas Gas that should be used for the Safe transaction.
-    /// @param baseGas Gas costs that are independent of the transaction execution(e.g. base transaction fee, signature check, payment of the refund)
-    /// @param gasPrice Gas price that should be used for the payment calculation.
-    /// @param gasToken Token address (or 0 if ETH) that is used for the payment.
-    /// @param refundReceiver Address of receiver of gas payment (or 0 if tx.origin).
+    /// @param baseGas Gas costs that are independent of the transaction execution(e.g. base transaction fee, signature check, payment of the refund) 基本 Gas
+    /// @param gasPrice Gas price that should be used for the payment calculation. 若为 0，就不支付给 refundReceiver
+    /// @param gasToken Token address (or 0 if ETH) that is used for the payment. 支付给 refundReceiver 的 token 地址；若是 0，则支付 ETH
+    /// @param refundReceiver Address of receiver of gas payment (or 0 if tx.origin). 若是 0，则为 tx.origin
     /// @param signatures Packed signature data ({bytes32 r}{bytes32 s}{uint8 v})
     function execTransaction(
         address to,
@@ -142,7 +148,7 @@ contract GnosisSafe is
             // Increase nonce and execute transaction.
             nonce++;
             txHash = keccak256(txHashData);
-            checkSignatures(txHash, txHashData, signatures);
+            checkSignatures(txHash, txHashData, signatures); // 检查交易签名
         }
         address guard = getGuard();
         {
@@ -173,7 +179,9 @@ contract GnosisSafe is
             uint256 gasUsed = gasleft();
             // If the gasPrice is 0 we assume that nearly all available gas can be used (it is always more than safeTxGas)
             // We only substract 2500 (compared to the 3000 before) to ensure that the amount passed is still higher than safeTxGas
+            // 执行交易
             success = execute(to, value, data, operation, gasPrice == 0 ? (gasleft() - 2500) : safeTxGas);
+            // 计算执行此交易消耗的 Gas
             gasUsed = gasUsed.sub(gasleft());
             // If no safeTxGas and no gasPrice was set (e.g. both are 0), then the internal tx is required to be successful
             // This makes it possible to use `estimateGas` without issues, as it searches for the minimum gas where the tx doesn't revert
@@ -181,6 +189,7 @@ contract GnosisSafe is
             // We transfer the calculated tx costs to the tx.origin to avoid sending it to intermediate contracts that have made calls
             uint256 payment = 0;
             if (gasPrice > 0) {
+                // 支付交易费用给 refundReceiver
                 payment = handlePayment(gasUsed, baseGas, gasPrice, gasToken, refundReceiver);
             }
             if (success) emit ExecutionSuccess(txHash, payment);
@@ -193,6 +202,8 @@ contract GnosisSafe is
         }
     }
 
+    // 支付 Gas 费用给 refundReceiver 或 tx.origin
+    // 可以使用非 ETH 的 gasToken 支付
     function handlePayment(
         uint256 gasUsed,
         uint256 baseGas,
@@ -253,8 +264,11 @@ contract GnosisSafe is
         bytes32 s;
         uint256 i;
         for (i = 0; i < requiredSignatures; i++) {
+            // 把每个 signature 以 {bytes32 r}{bytes32 s}{uint8 v} 的格式解出来
             (v, r, s) = signatureSplit(signatures, i);
+            // 这里 v 也作为类型号
             if (v == 0) {
+                // 遵循 EIP-1271 的合约签名（其实也就是合约认可的用户私钥签名）
                 // If v is 0 then it is a contract signature
                 // When handling contract signatures the address of the contract is encoded into r
                 currentOwner = address(uint160(uint256(r)));
@@ -284,18 +298,25 @@ contract GnosisSafe is
                 }
                 require(ISignatureValidator(currentOwner).isValidSignature(data, contractSignature) == EIP1271_MAGIC_VALUE, "GS024");
             } else if (v == 1) {
+                // Pre-Validated Signatures 通过调用 approveHash 而验证的 owner
                 // If v is 1 then it is an approved hash
                 // When handling approved hashes the address of the approver is encoded into r
                 currentOwner = address(uint160(uint256(r)));
                 // Hashes are automatically approved by the sender of the message or when they have been pre-approved via a separate transaction
+                // 这里要注意如果 owner 就是 msg.sender，那就不需要它调用过 approveHash
                 require(msg.sender == currentOwner || approvedHashes[currentOwner][dataHash] != 0, "GS025");
             } else if (v > 30) {
                 // If v > 30 then default va (27,28) has been adjusted for eth_sign flow
                 // To support eth_sign and similar we adjust v and hash the messageHash with the Ethereum message prefix before applying ecrecover
+                // 通过调用 eth_sign JSON RPC 获得的签名，并把签名中的 v 加上 4
+                // 签名方式 sign(keccak256("\x19Ethereum Signed Message:\n" + len(message) + message)))
+                // 这里其中 32 是 dataHash 的长度；这里 v - 4 是因为传入的 v 是加上 4 的
+                // 参见 https://eth.wiki/json-rpc/API 中的 eth_sign
                 currentOwner = ecrecover(keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", dataHash)), v - 4, r, s);
             } else {
                 // Default is the ecrecover flow with the provided data hash
                 // Use ecrecover with the messageHash for EOA signatures
+                // 直接对 dataHash 的签名
                 currentOwner = ecrecover(dataHash, v, r, s);
             }
             require(currentOwner > lastOwner && owners[currentOwner] != address(0) && currentOwner != SENTINEL_OWNERS, "GS026");
@@ -328,6 +349,7 @@ contract GnosisSafe is
 
     /**
      * @dev Marks a hash as approved. This can be used to validate a hash that is used by a signature.
+     * 发送者（必须是 owner）同意指定交易数据的哈希；存储消耗 Gas
      * @param hashToApprove The hash that should be marked as approved for signatures that are verified by this contract.
      */
     function approveHash(bytes32 hashToApprove) external {
